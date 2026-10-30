@@ -1,0 +1,15 @@
+[package]
+name = "corrugated_root_solver"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "corrugated_root_solver"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.20", features = ["extension-module"] }
+roots = "0.0.8"
+
+[dev-dependencies]
+approx = "0.5.1"
