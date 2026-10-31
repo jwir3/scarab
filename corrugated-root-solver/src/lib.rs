@@ -9,15 +9,22 @@ struct Waveguide {
     y0: f64,
     d: f64,
     k: f64,
+
+    /// The number of periods in the graphical version of the waveguide.
+    graphical_periods: u32,
 }
 
 #[pymethods]
 impl Waveguide {
     #[new]
-    pub fn new(y0: f64, d: f64, k: f64) -> Self {
+    pub fn new(y0: f64, d: f64, k: f64, graphical_periods: u32) -> Self {
         Self {
-            y0, d, k
+            y0, d, k, graphical_periods
         }
+    }
+
+    pub fn graphical_periods(&self) -> f64 {
+        self.graphical_periods as f64
     }
 
     pub fn boundary(&self, x: f64) -> f64 {
@@ -52,12 +59,18 @@ impl Waveguide {
             self.k
         );
 
+
         // In this case, it's either X_3 or X_4, depending on whether cos(theta_n) is positive or
         // negative.
-        let bound_lower = x_a;
+        let bound_lower = if theta_n.cos() > 0.0 { x_a } else { -10.0 };
 
         // XXX_jwir3: I don't think this is right - the bounds should be relative.
-        let bound_upper = 10.0;
+        let bound_upper = if theta_n.cos() > 0.0 { 10.0 } else { x_a };
+
+        // XXX_jwir3: We can advance the bracket if we receive an error 'NoBracketing', because
+        //            this indicates that there was no root in the bracketed region.
+
+        println!("[{}, {}]", bound_lower, bound_upper);
 
         let mut convergency = SimpleConvergency { eps: 1e-10, max_iter: 100 };
 
@@ -151,11 +164,13 @@ impl Waveguide {
             (false, _, true) => {
                 self.intersect_from_floor(x_n, theta_n)
             },
-            // (false, _, false) => {
-
-            // }
+            (false, _, false) => {
+                self.intersect_from_floor(x_n, theta_n)
+            }
             _ => panic!("Undefined possible combination of s_n, i_n, cos(theta) > 0: {}, {}, {}", s_n, i_n, cos_theta_n_gt_zero)
         };
+
+        println!("Root found was: {:?}", x_np1_raw);
 
         let theta_np1 = match s_np1 {
             false => -theta_n,
@@ -164,7 +179,10 @@ impl Waveguide {
 
         // Calculate the spatial period T = 2pi / k
         // Wrap the coordinate using Euclidean remainder to handle negative x bounds safely
-        let x_np1 = x_np1_raw.rem_euclid(self.period());
+        // Note that we multiply this by the number of periods shown, if graphing.
+        let x_np1 = x_np1_raw.rem_euclid(self.period() * self.graphical_periods());
+
+        println!("Resulting modulo root was: {:?}", x_np1);
 
         let y_np1 = match s_np1 {
             true => self.boundary(x_np1),
@@ -205,62 +223,62 @@ mod tests {
 
     #[test]
     fn test_period_is_4() {
-        let waveguide = Waveguide::new(1.0, 1.0, PI/2.0);
+        let waveguide = Waveguide::new(1.0, 1.0, PI/2.0, 1);
         assert_abs_diff_eq!(waveguide.period(), 4.0, epsilon=1e-10);
     }
 
     #[test]
     fn test_boundary_at_0() {
-        let waveguide = Waveguide::new(1.0, 1.0, PI/2.0);
+        let waveguide = Waveguide::new(1.0, 1.0, PI/2.0, 1);
         assert_abs_diff_eq!(waveguide.boundary(0.0), 2.0, epsilon = 1e-10);
     }
 
     #[test]
     fn test_boundary_at_1() {
-        let waveguide = Waveguide::new(1.0, 1.0, PI/2.0);
+        let waveguide = Waveguide::new(1.0, 1.0, PI/2.0, 1);
         assert_abs_diff_eq!(waveguide.boundary(1.0), 1.0, epsilon = 1e-10);
     }
 
     #[test]
     fn test_boundary_at_2_425172() {
-        let waveguide = Waveguide::new(1.0, 1.0, PI/2.0);
+        let waveguide = Waveguide::new(1.0, 1.0, PI/2.0, 1);
         assert_abs_diff_eq!(waveguide.boundary(2.425172), 0.2148503627, epsilon = 1e-10);
     }
 
     #[test]
     fn test_boundary_at_4() {
         // Our period is 4, so this should be the same as 0.
-        let waveguide = Waveguide::new(1.0, 1.0, PI/2.0);
+        let waveguide = Waveguide::new(1.0, 1.0, PI/2.0, 1);
         assert_abs_diff_eq!(waveguide.boundary(4.0), waveguide.boundary(0.0), epsilon = 1e-10);
     }
 
     #[test]
     fn test_derivative_at_0() {
-        let waveguide = Waveguide::new(1.0, 1.0, PI/2.0);
+        let waveguide = Waveguide::new(1.0, 1.0, PI/2.0, 1);
         assert_abs_diff_eq!(waveguide.derivative(0.0), 0.0, epsilon = 1e-10);
     }
 
     #[test]
     fn test_derivative_at_1() {
-        let waveguide = Waveguide::new(1.0, 1.0, PI/2.0);
+        let waveguide = Waveguide::new(1.0, 1.0, PI/2.0, 1);
         assert_abs_diff_eq!(waveguide.derivative(1.0), -1.57079632679, epsilon = 1e-10);
     }
 
     #[test]
     fn test_derivative_at_1_4761528() {
-        let waveguide = Waveguide::new(1.0, 1.0, PI/2.0);
+        let waveguide = Waveguide::new(1.0, 1.0, PI/2.0, 1);
         assert_abs_diff_eq!(waveguide.derivative(1.4761528), -1.15153841601, epsilon = 1e-10);
     }
 
     #[test]
     fn test_derivative_at_3_3() {
-        let waveguide = Waveguide::new(1.0, 1.0, PI/2.0);
+        let waveguide = Waveguide::new(1.0, 1.0, PI/2.0, 1);
         assert_abs_diff_eq!(waveguide.derivative(3.3), 1.39958977535, epsilon = 1e-10);
     }
 
     #[test]
     fn test_derivative_at_4() {
-        let waveguide = Waveguide::new(1.0, 1.0, PI/2.0);
+        let waveguide = Waveguide::new(1.0, 1.0, PI/2.0, 1);
         assert_abs_diff_eq!(waveguide.derivative(4.0), waveguide.derivative(0.0), epsilon = 1e-10);
     }
 
@@ -293,7 +311,7 @@ mod tests {
 
     #[test]
     fn test_get_angle_from_slope_and_get_slope_from_angle_are_inverses() {
-        let waveguide = Waveguide::new(1.0, 1.0, std::f64::consts::PI / 2.0);
+        let waveguide = Waveguide::new(1.0, 1.0, std::f64::consts::PI / 2.0, 1);
         let slope = 1.0;
         let angle = waveguide.get_angle_from_slope(slope);
         let computed_slope = waveguide.get_slope_from_angle(angle);
@@ -308,7 +326,7 @@ mod tests {
         let d = 0.1;
         let k = std::f64::consts::PI / 2.0;
 
-        let waveguide = Waveguide::new(y_0, d, k);
+        let waveguide = Waveguide::new(y_0, d, k, 1);
 
         let (s_np1, x_np1, theta_np1, y_np1) = waveguide.iterate_map(false, x_start, theta_start);
         assert_eq!(s_np1, true);
