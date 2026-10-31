@@ -8,6 +8,10 @@ name = "corrugated_root_solver"
 crate-type = ["cdylib"]
 
 [dependencies]
+colored = "3.1.1"
+fern = { version = "0.7.1", features = ["colored"] }
+humantime = "2.4.0"
+log = "0.4.35"
 pyo3 = { version = "0.20", features = ["extension-module"] }
 roots = "0.0.8"
 

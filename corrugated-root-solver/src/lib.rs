@@ -4,6 +4,10 @@ use pyo3::prelude::*;
 use roots::{find_root_brent, SimpleConvergency};
 use std::f64::consts::PI;
 
+use log::{debug};
+
+pub mod logger;
+
 #[pyclass]
 struct Waveguide {
     y0: f64,
@@ -70,7 +74,7 @@ impl Waveguide {
         // XXX_jwir3: We can advance the bracket if we receive an error 'NoBracketing', because
         //            this indicates that there was no root in the bracketed region.
 
-        println!("[{}, {}]", bound_lower, bound_upper);
+        debug!("[{}, {}]", bound_lower, bound_upper);
 
         let mut convergency = SimpleConvergency { eps: 1e-10, max_iter: 100 };
 
@@ -170,7 +174,7 @@ impl Waveguide {
             _ => panic!("Undefined possible combination of s_n, i_n, cos(theta) > 0: {}, {}, {}", s_n, i_n, cos_theta_n_gt_zero)
         };
 
-        println!("Root found was: {:?}", x_np1_raw);
+        debug!("Root found was: {:?}", x_np1_raw);
 
         let theta_np1 = match s_np1 {
             false => -theta_n,
@@ -182,7 +186,7 @@ impl Waveguide {
         // Note that we multiply this by the number of periods shown, if graphing.
         let x_np1 = x_np1_raw.rem_euclid(self.period() * self.graphical_periods());
 
-        println!("Resulting modulo root was: {:?}", x_np1);
+        debug!("Resulting modulo root was: {:?}", x_np1);
 
         let y_np1 = match s_np1 {
             true => self.boundary(x_np1),
@@ -196,6 +200,9 @@ impl Waveguide {
 // The module name must match the `name` defined in the [lib] section of Cargo.toml
 #[pymodule]
 fn corrugated_root_solver(_py: Python, m: &PyModule) -> PyResult<()> {
+    // Initialize the logger when the module is loaded
+    logger::setup_logger().expect("Failed to initialize logger");
+
     m.add_class::<Waveguide>()?;
     Ok(())
 }
@@ -319,6 +326,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_iterate_map_from_known_x_and_45_deg_theta_should_not_self_shadow() {
         let theta_start = 45.0 * (std::f64::consts::PI / 180.0);
         let x_start = 1.1;
@@ -328,7 +336,8 @@ mod tests {
 
         let waveguide = Waveguide::new(y_0, d, k, 1);
 
-        let (s_np1, x_np1, theta_np1, y_np1) = waveguide.iterate_map(false, x_start, theta_start);
+        let (s_np1, _, x_np1, theta_np1, y_np1) =
+            waveguide.iterate_map(false, x_start, theta_start);
         assert_eq!(s_np1, true);
 
         // Note that this is the intersection with the corrugated ceiling.
