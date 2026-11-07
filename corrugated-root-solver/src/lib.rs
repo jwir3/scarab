@@ -2,9 +2,10 @@
 #![allow(non_local_definitions)]
 use pyo3::prelude::*;
 use roots::{find_root_brent, SimpleConvergency};
+use vecmath::{Vector2, vec2_normalized};
 use std::f64::consts::PI;
 
-use log::{debug};
+use log::{debug, info};
 
 pub mod logger;
 
@@ -51,6 +52,29 @@ impl Waveguide {
         2.0 * self.period()
     }
 
+    pub fn get_normal_at_x(&self, x: f64) -> Vector2<f64> {
+        // let y = self.boundary(x);
+        let slope = self.derivative(x);
+        let v: Vector2::<f64> = [slope, -1.0];
+
+        vec2_normalized(v)
+    }
+
+    // Corresponds to the function I in the paper, which checks for self-intersection of the ray
+    // with the waveguide boundary.
+    //
+    // XXX_jwir3: Gemini seems to think that I might need to add in a check for whether the
+    //            direction of the ray is going up or down using the sin component.
+    fn shadowing_indicator(&self, psi: f64, theta: f64) -> bool {
+        if psi.tan() > theta.tan() && theta.cos() < 0.0 {
+            true
+        } else if psi.tan() < theta.tan() && theta.cos() > 0.0 {
+            true
+        } else {
+            false
+        }
+    }
+
     // This is a ray from the floor, with an angle of theta_n, that intersects the waveguide at
     // some x point.
     pub fn intersect_from_floor(&self, x_a: f64, theta_n: f64) -> f64 {
@@ -63,16 +87,50 @@ impl Waveguide {
             self.k
         );
 
+        // XXX_jwir3: In theory, I thought that a search space of width period/4.0 should be
+        //            sufficient for all possible values of d, but for some reason, there exists
+        //            large values of d such that a search space of period/8 width is required. This
+        //            is interesting and should be investigated further.
+        let step_size = if theta_n.cos() > 0.0 { self.period() / 16.0 } else { -self.period() / 16.0 };
 
-        // In this case, it's either X_3 or X_4, depending on whether cos(theta_n) is positive or
-        // negative.
-        let bound_lower = if theta_n.cos() > 0.0 { x_a } else { -10.0 };
+        // Define the absolute physical limits of the collision zone
+        let x_enter = x_a + ((self.y0 - self.d) / theta_n.tan());
+        let x_exit = x_a + ((self.y0 + self.d) / theta_n.tan());
 
-        // XXX_jwir3: I don't think this is right - the bounds should be relative.
-        let bound_upper = if theta_n.cos() > 0.0 { 10.0 } else { x_a };
+        // debug!("(x_enter, x_exit): ({}, {})", x_enter, x_exit);
 
-        // XXX_jwir3: We can advance the bracket if we receive an error 'NoBracketing', because
-        //            this indicates that there was no root in the bracketed region.
+        let mut x_curr = x_enter;
+        let mut valid_bracket = None;
+        let is_forward = theta_n.cos() > 0.0;
+
+        // March the ray forward (or backward) until we pass the physical ceiling limit
+        while if is_forward { x_curr < x_exit } else { x_curr > x_exit } {
+            let mut x_next = x_curr + step_size;
+
+            // Clamp the final step exactly to the exit boundary
+            if is_forward {
+                x_next = x_next.min(x_exit);
+            } else {
+                x_next = x_next.max(x_exit);
+            }
+
+            let r_curr = root_seeking_closure(x_curr);
+            let r_next = root_seeking_closure(x_next);
+
+            // A sign change indicates we have perfectly bracketed the first intersection
+            if r_curr * r_next <= 0.0 {
+                // Brent's method requires the first argument to be the smaller value
+                let bound_lower = x_curr.min(x_next);
+                let bound_upper = x_curr.max(x_next);
+                valid_bracket = Some((bound_lower, bound_upper));
+                break;
+            }
+
+            x_curr = x_next;
+        }
+
+        // Extract the bracket, panicking safely if the physics fail
+        let (bound_lower, bound_upper) = valid_bracket.expect("Failed to bracket root within physical limits");
 
         debug!("[{}, {}]", bound_lower, bound_upper);
 
@@ -86,28 +144,60 @@ impl Waveguide {
         ).unwrap()
     }
 
-    // pub fn intersect_x4(&self, theta_n: f64, x_n: f64) -> f64 {
-    //     let root_seeking_closure = build_root_seeking_closure(
-    //         0.0,
-    //         theta_n,
-    //         x_n,
-    //         self.y0,
-    //         self.d,
-    //         self.k
-    //     );
+    pub fn intersect_from_ceiling(&self, x_a: f64, theta_n: f64, x_floor: f64) -> f64 {
+        let root_seeking_closure = build_root_seeking_closure(
+            self.boundary(x_a),
+            theta_n,
+            x_a,
+            self.y0,
+            self.d,
+            self.k
+        );
 
-    //     let bound_lower = x_n;
-    //     let bound_upper = 10.0;
+        let step_size = if theta_n.cos() > 0.0 { self.period() / 4.0 } else { -self.period() / 4.0 };
+        let is_forward = theta_n.cos() > 0.0;
 
-    //     let mut convergency = SimpleConvergency { eps: 1e-10, max_iter: 100 };
+        // Step microscopically away from the starting coordinate to avoid bracketing the trivial root
+        let epsilon = if is_forward { 1e-8 } else { -1e-8 };
+        let mut x_curr = x_a + epsilon;
+        let x_exit = x_floor;
+        let mut valid_bracket = None;
 
-    //     find_root_brent(
-    //         bound_lower,
-    //         bound_upper,
-    //         &root_seeking_closure,
-    //         &mut convergency,
-    //     ).unwrap()
-    // }
+        // March the ray forward (or backward) until we pass the physical floor limit
+        while if is_forward { x_curr < x_exit } else { x_curr > x_exit } {
+            let mut x_next = x_curr + step_size;
+
+            // Clamp the final step exactly to the floor boundary
+            if is_forward {
+                x_next = x_next.min(x_exit);
+            } else {
+                x_next = x_next.max(x_exit);
+            }
+
+            let r_curr = root_seeking_closure(x_curr);
+            let r_next = root_seeking_closure(x_next);
+
+            // A sign change indicates we have perfectly bracketed the shadowing intersection
+            if r_curr * r_next <= 0.0 {
+                let bound_lower = x_curr.min(x_next);
+                let bound_upper = x_curr.max(x_next);
+                valid_bracket = Some((bound_lower, bound_upper));
+                break;
+            }
+
+            x_curr = x_next;
+        }
+
+        let (bound_lower, bound_upper) = valid_bracket.expect("Failed to bracket local shadowing root");
+        let mut convergency = SimpleConvergency { eps: 1e-10, max_iter: 100 };
+
+        find_root_brent(
+            bound_lower,
+            bound_upper,
+            &root_seeking_closure,
+            &mut convergency,
+        ).unwrap()
+    }
 
     pub fn compute_specular_reflection_angle_ceiling(&self, x_n: f64, theta_n: f64) -> f64 {
         let derivative_at_x_n = self.derivative(x_n);
@@ -124,27 +214,15 @@ impl Waveguide {
         angle.tan()
     }
 
-    pub fn intersect_from_ceiling_to_floor(&self, x_n: f64, theta_n: f64) -> (f64, f64) {
-        let specular_reflection_angle = self.compute_specular_reflection_angle_ceiling(x_n, theta_n);
-        let slope = self.get_slope_from_angle(specular_reflection_angle);
-        let y_n = self.boundary(x_n);
-        (x_n - (y_n / slope), specular_reflection_angle)
-    }
+    // pub fn intersect_from_ceiling_to_floor(&self, x_n: f64, theta_n: f64) -> (f64, f64) {
+    //     let specular_reflection_angle = self.compute_specular_reflection_angle_ceiling(x_n, theta_n);
+    //     let slope = self.get_slope_from_angle(specular_reflection_angle);
+    //     let y_n = self.boundary(x_n);
+    //     (x_n - (y_n / slope), specular_reflection_angle)
+    // }
 
     fn psi_n(&self, x_n:f64) -> f64 {
         (-self.d * self.k * (self.k * x_n).sin()).atan()
-    }
-
-    // Corresponds to the function I in the paper, which checks for self-intersection of the ray
-    // with the waveguide boundary.
-    fn shadowing_indicator(&self, psi: f64, theta: f64) -> bool {
-        if psi.tan() > theta.tan() && theta.cos() < 0.0 {
-            true
-        } else if psi.tan() < theta.tan() && theta.cos() > 0.0 {
-            true
-        } else {
-            false
-        }
     }
 
     /**
@@ -163,21 +241,27 @@ impl Waveguide {
         };
 
         let cos_theta_n_gt_zero = theta_n.cos() > 0.0;
+
         let x_np1_raw = match (s_n, i_n, cos_theta_n_gt_zero) {
-            (true, false, _) => x_floor,
-            (false, _, true) => {
-                self.intersect_from_floor(x_n, theta_n)
+            (true, false, _) => {
+                info!("Ceiling Start -- Shadowing indicator determined no inter-reflection");
+                x_floor
             },
-            (false, _, false) => {
+            (true, true, _) => {
+                info!("Ceiling start -- Shadowing indicator determined LOCAL SHADOW");
+                self.intersect_from_ceiling(x_n, theta_n, x_floor)
+            },
+            (false, _, _) => {
+                info!("Floor start");
                 self.intersect_from_floor(x_n, theta_n)
             }
-            _ => panic!("Undefined possible combination of s_n, i_n, cos(theta) > 0: {}, {}, {}", s_n, i_n, cos_theta_n_gt_zero)
         };
 
         debug!("Root found was: {:?}", x_np1_raw);
 
         let theta_np1 = match s_np1 {
             false => -theta_n,
+            // true => theta_n - (2.0 * self.psi_n(x_np1_raw)),
             true => (2.0 * self.psi_n(x_np1_raw)) - theta_n
         };
 
