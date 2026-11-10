@@ -27,17 +27,23 @@ def plot_normal_at_x(guide, x_normal=0.0):
 def plot_waveguide_boundary(guide):
     x_coords = np.linspace(0, GRAPHICAL_PERIODS * guide.period(), 500)
 
-    # 3. Compute the boundary using the compiled Rust method
     y_coords = [guide.boundary(x) for x in x_coords]
 
-    # 4. Render the plot
-    plt.plot(x_coords, y_coords, label="Corrugated Ceiling", color='black')
-    plt.axhline(0, color='black', linewidth=2, label="Flat Floor")
-    plt.xlabel("Horizontal Position (x)")
-    plt.ylabel("Height (y)")
-    plt.title("Dynamical Waveguide Geometry")
-    # plt.legend()
-    plt.grid(True)
+    # Set up the figure with a custom width and height
+    fig, ax = plt.subplots(figsize=(12, 4.5))
+
+    x_coords = np.linspace(0, GRAPHICAL_PERIODS * guide.period(), 500)
+    y_coords = [guide.boundary(x) for x in x_coords]
+
+    ax.plot(x_coords, y_coords, label="Corrugated Ceiling", color='black')
+    ax.axhline(0, color='black', linewidth=2, label="Flat Floor")
+    ax.set_xlabel("Horizontal Position (x)")
+    ax.set_ylabel("Height (y)")
+    ax.set_title("Dynamical Waveguide Geometry")
+    ax.grid(True)
+
+    # Enforce true geometry without squashing the window
+    ax.set_aspect('equal')
 
 def plot_wrapped_ray(guide, x_start, y_start, x_end, theta, y_end):
     # Ensure wrapping maps perfectly to your defined graphical bounds
@@ -86,6 +92,7 @@ def plot_wrapped_ray(guide, x_start, y_start, x_end, theta, y_end):
     enter_x_plot = 0.0 if step_dir == 1 else width
     plt.plot([enter_x_plot, x_end % width], [current_y, y_end], 'b-')
 
+
 def plot_trajectory(guide, x_start, theta_n_deg=45.0, iters=1):
     theta_start = theta_n_deg * (np.pi / 180.0)
 
@@ -106,6 +113,11 @@ def plot_trajectory(guide, x_start, theta_n_deg=45.0, iters=1):
         # Plot the final intersection point at its wrapped location
         plt.plot(x_np1_raw % width, y_np1, 'go')
 
+        # Plot the intersection point normal
+        if DEBUG_NORMALS and y_np1 > 0:
+            n = x_np1_raw % width
+            plot_normal_at_x(guide, x_normal=n)
+
         print(f"Intersection point: raw_x = {x_np1_raw}, wrapped_x = {x_np1}, y = {y_np1}")
         print(f"theta_np1: {theta_np1}")
 
@@ -122,12 +134,13 @@ if __name__ == "__main__":
 
     plot_waveguide_boundary(guide)
 
-    if DEBUG_NORMALS:
-        for x in np.linspace(0.0, GRAPHICAL_PERIODS * guide.period(), 20):
-            plot_normal_at_x(guide, x_normal=x)
+    # if DEBUG_NORMALS:
+    #     for x in np.linspace(0.0, GRAPHICAL_PERIODS * guide.period(), 20):
+    #         plot_normal_at_x(guide, x_normal=x)
 
-    # plot_trajectory(guide, x_start=1.0, theta_n_deg=89, iters=2)
-    # plot_trajectory(guide, x_start=3.0, theta_n_deg=45, iters=2)
+    plot_trajectory(guide, x_start=1.0, theta_n_deg=89, iters=35)
+    # plot_trajectory(guide, x_start=1.3, theta_n_deg=45, iters=2)
+    # plot_trajectory(guide, x_start=3.0, theta_n_deg=25, iters=2)
 
     plt.xlim(0, GRAPHICAL_PERIODS * guide.period())
 
