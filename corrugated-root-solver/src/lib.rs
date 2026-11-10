@@ -1,7 +1,7 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 #![allow(non_local_definitions)]
 use pyo3::prelude::*;
-use roots::{SimpleConvergency, find_root_brent};
+use roots::{SearchError, SimpleConvergency, find_root_brent};
 use std::f64::consts::PI;
 use vecmath::{Vector2, vec2_dot, vec2_normalized};
 
@@ -63,9 +63,22 @@ impl Waveguide {
         vec2_normalized(v)
     }
 
+    pub fn get_root_finding_step_size(&self, theta: f64) -> f64 {
+        // XXX_jwir3: In theory, I thought that a search space of width period/4.0 should be
+        //            sufficient for all possible values of d, but for some reason, there exists
+        //            large values of d such that a search space of period/16 width is required.
+        //            This is interesting and should be investigated further.
+        if theta.cos() > 0.0 {
+            self.period() / 32.0
+        } else {
+            -self.period() / 32.0
+        }
+    }
+
     // Corresponds to the function I in the paper, which checks for self-intersection of the ray
-    // with the waveguide boundary.
-    fn shadowing_indicator(&self, psi: f64, theta: f64) -> bool {
+    // with the waveguide boundary, but only with the current period of the wave (i.e. the current
+    // wave crest).
+    fn local_shadowing_indicator(&self, psi: f64, theta: f64) -> bool {
         // If the reflected ray points upwards into the ceiling, it is guaranteed
         // to cause local shadowing regardless of the tangent slope.
         if theta.sin() > 0.0 {
@@ -87,15 +100,7 @@ impl Waveguide {
         let root_seeking_closure =
             build_root_seeking_closure(0.0, theta_n, x_a, self.y0, self.d, self.k);
 
-        // XXX_jwir3: In theory, I thought that a search space of width period/4.0 should be
-        //            sufficient for all possible values of d, but for some reason, there exists
-        //            large values of d such that a search space of period/8 width is required. This
-        //            is interesting and should be investigated further.
-        let step_size = if theta_n.cos() > 0.0 {
-            self.period() / 16.0
-        } else {
-            -self.period() / 16.0
-        };
+        let step_size = self.get_root_finding_step_size(theta_n);
 
         // Define the absolute physical limits of the collision zone
         let x_enter = x_a + ((self.y0 - self.d) / theta_n.tan());
@@ -157,15 +162,12 @@ impl Waveguide {
         .unwrap()
     }
 
-    pub fn intersect_from_ceiling(&self, x_a: f64, theta_n: f64, x_floor: f64) -> f64 {
+    pub fn intersect_from_ceiling(&self, x_a: f64, theta_n: f64, x_floor: f64) -> Option<f64> {
         let root_seeking_closure =
             build_root_seeking_closure(self.boundary(x_a), theta_n, x_a, self.y0, self.d, self.k);
 
-        let step_size = if theta_n.cos() > 0.0 {
-            self.period() / 4.0
-        } else {
-            -self.period() / 4.0
-        };
+        let step_size = self.get_root_finding_step_size(theta_n);
+
         let is_forward = theta_n.cos() > 0.0;
 
         // Step microscopically away from the starting coordinate to avoid bracketing the trivial root
@@ -214,21 +216,23 @@ impl Waveguide {
 
             x_curr = x_next;
         }
-
-        let (bound_lower, bound_upper) =
-            valid_bracket.expect("Failed to bracket local shadowing root");
-        let mut convergency = SimpleConvergency {
-            eps: 1e-10,
-            max_iter: 100,
-        };
-
-        find_root_brent(
-            bound_lower,
-            bound_upper,
-            &root_seeking_closure,
-            &mut convergency,
-        )
-        .unwrap()
+        if let Some((bound_lower, bound_upper)) = valid_bracket {
+            let mut convergency = SimpleConvergency {
+                eps: 1e-10,
+                max_iter: 100,
+            };
+            Some(
+                find_root_brent(
+                    bound_lower,
+                    bound_upper,
+                    &root_seeking_closure,
+                    &mut convergency,
+                )
+                .unwrap(),
+            )
+        } else {
+            None
+        }
     }
 
     pub fn get_angle_from_slope(&self, slope: f64) -> f64 {
@@ -264,30 +268,23 @@ impl Waveguide {
     pub fn iterate_map(&self, s_n: bool, x_n: f64, theta_n: f64) -> (bool, f64, f64, f64, f64) {
         let x_floor = x_n - (self.boundary(x_n) / theta_n.tan());
 
-        let i_n = self.shadowing_indicator(self.psi_n(x_n), theta_n);
+        let i_n = self.local_shadowing_indicator(self.psi_n(x_n), theta_n);
 
-        debug!("Self-shadowing indicator shows: {:?}", i_n);
+        debug!("Local shadowing indicator shows: {:?}", i_n);
 
-        let s_np1 = match (s_n, i_n) {
-            (false, _) => true,
-            (true, true) => true,
-            _ => false,
-        };
-
-        let cos_theta_n_gt_zero = theta_n.cos() > 0.0;
-
-        let x_np1_raw = match (s_n, i_n, cos_theta_n_gt_zero) {
-            (true, false, _) => {
-                info!("Ceiling Start -- Shadowing indicator determined no inter-reflection");
-                x_floor
-            }
-            (true, true, _) => {
-                info!("Ceiling start -- Shadowing indicator determined LOCAL SHADOW");
-                self.intersect_from_ceiling(x_n, theta_n, x_floor)
-            }
-            (false, _, _) => {
+        // We determine the next state and raw x coordinate together
+        let (s_np1, x_np1_raw) = match s_n {
+            false => {
                 info!("Floor start");
-                self.intersect_from_floor(x_n, theta_n)
+                (true, self.intersect_from_floor(x_n, theta_n))
+            }
+            true => {
+                info!("Ceiling start -- Checking for downstream collisions");
+                if let Some(ceiling_root) = self.intersect_from_ceiling(x_n, theta_n, x_floor) {
+                    (true, ceiling_root)
+                } else {
+                    (false, x_floor)
+                }
             }
         };
 
@@ -295,28 +292,10 @@ impl Waveguide {
 
         let theta_np1 = match s_np1 {
             false => -theta_n,
-            // true => theta_n - (2.0 * self.psi_n(x_np1_raw)),
-            true => (2.0 * self.psi_n(x_np1_raw)) - theta_n, // true => (2.0 * self.psi_n(x_n)) - theta_n
+            true => (2.0 * self.psi_n(x_np1_raw)) - theta_n,
         };
 
-        // Determine what the cosine of the angle relative to the normal is and flip if
-        // necessary
-        // let n = self.get_normal_at_x(x_np1_raw);
-        // let v1 = self.get_vector_from_theta(n, theta_np1);
-        // // let v2 = self.get_vector_from_theta(-theta_np1);
-        // info!("Direction vector for outgoing ray is: {:?}", v1);
-
-        // // let v1 = vec2_normalized([x_n - x_np1_raw, self.boundary(x_n) - self.boundary(x_np1_raw)]);
-
-        // info!("Cosine of angle between v1 and n: {:?}", vec2_dot(v1, n));
-        // if vec2_dot(v1, n) < 0.0 {
-        //     // In this case, we need to rotate theta across the normal.
-        //     theta_np1 = -theta_np1;
-        // }
-
-        // Calculate the spatial period T = 2pi / k
-        // Wrap the coordinate using Euclidean remainder to handle negative x bounds safely
-        // Note that we multiply this by the number of periods shown, if graphing.
+        // Wrap the coordinate using Euclidean remainder
         let x_np1 = x_np1_raw.rem_euclid(self.period() * self.graphical_periods());
 
         debug!("Resulting modulo root was: {:?}", x_np1);
@@ -568,5 +547,49 @@ mod tests {
 
         let expected_theta_np1 = (2.0 * waveguide.psi_n(x_np1_raw)) - theta_start;
         assert_abs_diff_eq!(theta_np1, expected_theta_np1, epsilon = 1e-8);
+    }
+
+    #[test]
+    fn test_iterate_map_ceiling_departure_with_downstream_global_shadowing() {
+        // Setup waveguide exactly as it was during Iteration 7
+        let y_0 = 2.0;
+        let d = 0.73;
+        let k = std::f64::consts::PI / 2.0;
+        let waveguide = Waveguide::new(y_0, d, k, 2);
+
+        // Ray state at the start of Iteration 7
+        let s_n = true; // Starting on the ceiling
+        let x_start = 4.097784350252917;
+        let theta_start = -2.9785129236040566; // Extremely shallow angle pointing left and down
+
+        let (s_np1, x_np1_raw, _x_np1, _theta_np1, _y_np1) =
+            waveguide.iterate_map(s_n, x_start, theta_start);
+
+        // 1. Calculate the theoretical floor intersection (~ -12.44)
+        let x_floor = x_start - (waveguide.boundary(x_start) / theta_start.tan());
+
+        // 2. The ray must hit the ceiling (global shadowing), NOT the floor.
+        // On your current code, this assertion will fail because s_np1 will be false.
+        assert_eq!(
+            s_np1, true,
+            "Ray should suffer a downstream ceiling collision, but it escaped to the floor."
+        );
+
+        // 3. Ensure the coordinate returned is not the floor coordinate.
+        assert!(
+            (x_np1_raw - x_floor).abs() > 1.0,
+            "Engine blindly returned the floor intersection instead of the downstream ceiling collision."
+        );
+
+        // 4. The raw intersection coordinate must be a valid root of the geometric intersection.
+        let root_closure = build_root_seeking_closure(
+            waveguide.boundary(x_start),
+            theta_start,
+            x_start,
+            y_0,
+            d,
+            k,
+        );
+        assert_abs_diff_eq!(root_closure(x_np1_raw), 0.0, epsilon = 1e-8);
     }
 }

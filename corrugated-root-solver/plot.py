@@ -138,7 +138,8 @@ if __name__ == "__main__":
     #     for x in np.linspace(0.0, GRAPHICAL_PERIODS * guide.period(), 20):
     #         plot_normal_at_x(guide, x_normal=x)
 
-    plot_trajectory(guide, x_start=1.0, theta_n_deg=89, iters=35)
+    plot_trajectory(guide, x_start=6.33571276243665, theta_n_deg=-4.088981432330988 * 180/np.pi, iters=3)
+    # plot_trajectory(guide, x_start=1.0, theta_n_deg=89, iters=8)
     # plot_trajectory(guide, x_start=1.3, theta_n_deg=45, iters=2)
     # plot_trajectory(guide, x_start=3.0, theta_n_deg=25, iters=2)
 
