@@ -2,9 +2,9 @@ use std::fs;
 use std::path::Path;
 
 use fern::colors::{Color, ColoredLevelConfig};
-use log::{LevelFilter};
+use log::LevelFilter;
 
-pub fn setup_logger() -> Result<(), fern::InitError> {
+pub fn setup_logger(level_filter: LevelFilter) -> Result<(), fern::InitError> {
     // Configure the colors for your console output
     let colors = ColoredLevelConfig::new()
         .info(Color::Green)
@@ -39,22 +39,24 @@ pub fn setup_logger() -> Result<(), fern::InitError> {
             }
         }
 
-        file_log_option = Some(fern::Dispatch::new()
-            .format(|out, message, record| {
-                out.finish(format_args!(
-                    "[{timestamp}] [{level}] {message}",
-                    timestamp = humantime::format_rfc3339(std::time::SystemTime::now()),
-                    level = record.level(), // No color wrapping here
-                    message = message
-                ))
-            })
-            .chain(fern::log_file(log_file_path)?));
+        file_log_option = Some(
+            fern::Dispatch::new()
+                .format(|out, message, record| {
+                    out.finish(format_args!(
+                        "[{timestamp}] [{level}] {message}",
+                        timestamp = humantime::format_rfc3339(std::time::SystemTime::now()),
+                        level = record.level(), // No color wrapping here
+                        message = message
+                    ))
+                })
+                .chain(fern::log_file(log_file_path)?),
+        );
     }
 
     // 3. Base Dispatcher (Combines both sinks)
     let mut dispatch = fern::Dispatch::new()
         // Set your global minimum log level
-        .level(LevelFilter::Debug)
+        .level(level_filter)
         .chain(stdout_log);
 
     if file_log_option.is_some() {

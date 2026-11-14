@@ -1,13 +1,66 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 #![allow(non_local_definitions)]
 use pyo3::prelude::*;
-use roots::{SearchError, SimpleConvergency, find_root_brent};
+use roots::{SimpleConvergency, find_root_brent};
 use std::f64::consts::PI;
-use vecmath::{Vector2, vec2_dot, vec2_normalized};
+use vecmath::{Vector2, vec2_normalized};
 
-use log::{debug, info};
+use log::{LevelFilter, debug, info};
 
 pub mod logger;
+
+const SHOULD_DEBUG: bool = false;
+
+// If we want to discard some percentage of iterations before utilizing them, we can set that here.
+// const DISCARD_ITERATIONS_PCT = 0.1;
+
+#[pyclass]
+#[derive(Clone)]
+struct PhaseSpace {
+    coordinates: Vec<(bool, f64, f64)>,
+}
+
+#[pymethods]
+impl PhaseSpace {
+    #[new]
+    pub fn new() -> Self {
+        PhaseSpace {
+            coordinates: vec![],
+        }
+    }
+
+    fn add_coordinates(&mut self, coord: (bool, f64, f64)) {
+        self.coordinates.push(coord);
+    }
+
+    pub fn get_s_coordinates(&self) -> Vec<bool> {
+        self.coordinates.iter().map(|p| p.0).collect()
+    }
+
+    pub fn get_x_coordinates(&self) -> Vec<f64> {
+        self.coordinates.iter().map(|p| p.1).collect()
+    }
+
+    pub fn get_x_coordinates_for_slice(&self, s_n: bool) -> Vec<f64> {
+        self.coordinates
+            .iter()
+            .filter(|(s, _x, _t)| *s == s_n)
+            .map(|p| p.1)
+            .collect()
+    }
+
+    pub fn get_theta_coordinates(&self) -> Vec<f64> {
+        self.coordinates.iter().map(|p| p.2).collect()
+    }
+
+    pub fn get_theta_coordinates_for_slice(&self, s_n: bool) -> Vec<f64> {
+        self.coordinates
+            .iter()
+            .filter(|(s, _x, _t)| *s == s_n)
+            .map(|p| p.2)
+            .collect()
+    }
+}
 
 #[pyclass]
 struct Waveguide {
@@ -17,6 +70,9 @@ struct Waveguide {
 
     /// The number of periods in the graphical version of the waveguide.
     graphical_periods: u32,
+
+    /// The phase space representation of the map
+    phase_space: PhaseSpace,
 }
 
 #[pymethods]
@@ -28,7 +84,20 @@ impl Waveguide {
             d,
             k,
             graphical_periods,
+            phase_space: PhaseSpace::new(),
         }
+    }
+
+    pub fn get_phase_space(&self) -> PhaseSpace {
+        self.phase_space.clone()
+    }
+
+    pub fn get_average_height(&self) -> f64 {
+        self.y0
+    }
+
+    pub fn get_wavenumber(&self) -> f64 {
+        self.k
     }
 
     pub fn graphical_periods(&self) -> f64 {
@@ -61,6 +130,22 @@ impl Waveguide {
         let v: Vector2<f64> = [slope, -1.0];
 
         vec2_normalized(v)
+    }
+
+    pub fn get_delta(&self) -> f64 {
+        self.d / self.y0
+    }
+
+    pub fn get_gamma_threshold(&self) -> f64 {
+        let gamma_threshold = (self.get_delta() * self.k).atan() / self.k;
+        gamma_threshold
+    }
+
+    pub fn get_gamma_range(&self) -> (f64, f64) {
+        (
+            -1.5 * self.get_gamma_threshold(),
+            1.5 * self.get_gamma_threshold(),
+        )
     }
 
     pub fn get_root_finding_step_size(&self, theta: f64) -> f64 {
@@ -96,7 +181,7 @@ impl Waveguide {
 
     // This is a ray from the floor, with an angle of theta_n, that intersects the waveguide at
     // some x point.
-    pub fn intersect_from_floor(&self, x_a: f64, theta_n: f64) -> f64 {
+    pub fn intersect_from_floor(&self, x_a: f64, theta_n: f64) -> Option<f64> {
         let root_seeking_closure =
             build_root_seeking_closure(0.0, theta_n, x_a, self.y0, self.d, self.k);
 
@@ -142,24 +227,25 @@ impl Waveguide {
             x_curr = x_next;
         }
 
-        // Extract the bracket, panicking safely if the physics fail
-        let (bound_lower, bound_upper) =
-            valid_bracket.expect("Failed to bracket root within physical limits");
+        if let Some((bound_lower, bound_upper)) = valid_bracket {
+            debug!("[{}, {}]", bound_lower, bound_upper);
 
-        debug!("[{}, {}]", bound_lower, bound_upper);
+            let mut convergency = SimpleConvergency {
+                eps: 1e-10,
+                max_iter: 100,
+            };
 
-        let mut convergency = SimpleConvergency {
-            eps: 1e-10,
-            max_iter: 100,
-        };
-
-        find_root_brent(
-            bound_lower,
-            bound_upper,
-            &root_seeking_closure,
-            &mut convergency,
-        )
-        .unwrap()
+            // Use .ok() to convert the Result into an Option<f64>
+            find_root_brent(
+                bound_lower,
+                bound_upper,
+                &root_seeking_closure,
+                &mut convergency,
+            )
+            .ok()
+        } else {
+            None
+        }
     }
 
     pub fn intersect_from_ceiling(&self, x_a: f64, theta_n: f64, x_floor: f64) -> Option<f64> {
@@ -265,18 +351,26 @@ impl Waveguide {
      * The main workhorse of the simulation. This function takes the current state of the ray,
      * (x_n, theta_n), and computes the next state of the ray, (S_n+1, x_n+1_raw, x_n+1, theta_n+1).
      */
-    pub fn iterate_map(&self, s_n: bool, x_n: f64, theta_n: f64) -> (bool, f64, f64, f64, f64) {
+    pub fn iterate_map(
+        &mut self,
+        s_n: bool,
+        x_n: f64,
+        theta_n: f64,
+    ) -> Option<(bool, f64, f64, f64, f64)> {
         let x_floor = x_n - (self.boundary(x_n) / theta_n.tan());
-
         let i_n = self.local_shadowing_indicator(self.psi_n(x_n), theta_n);
 
         debug!("Local shadowing indicator shows: {:?}", i_n);
 
-        // We determine the next state and raw x coordinate together
         let (s_np1, x_np1_raw) = match s_n {
             false => {
                 info!("Floor start");
-                (true, self.intersect_from_floor(x_n, theta_n))
+                // Propagate the None if intersect_from_floor fails
+                if let Some(floor_root) = self.intersect_from_floor(x_n, theta_n) {
+                    (true, floor_root)
+                } else {
+                    return None;
+                }
             }
             true => {
                 info!("Ceiling start -- Checking for downstream collisions");
@@ -288,14 +382,11 @@ impl Waveguide {
             }
         };
 
-        debug!("Root found was: {:?}", x_np1_raw);
-
         let theta_np1 = match s_np1 {
             false => -theta_n,
             true => (2.0 * self.psi_n(x_np1_raw)) - theta_n,
         };
 
-        // Wrap the coordinate using Euclidean remainder
         let x_np1 = x_np1_raw.rem_euclid(self.period() * self.graphical_periods());
 
         debug!("Resulting modulo root was: {:?}", x_np1);
@@ -305,7 +396,9 @@ impl Waveguide {
             false => 0.0,
         };
 
-        (s_np1, x_np1_raw, x_np1, theta_np1, y_np1)
+        self.phase_space.add_coordinates((s_np1, x_np1, theta_np1));
+
+        Some((s_np1, x_np1_raw, x_np1, theta_np1, y_np1))
     }
 }
 
@@ -313,9 +406,15 @@ impl Waveguide {
 #[pymodule]
 fn corrugated_root_solver(_py: Python, m: &PyModule) -> PyResult<()> {
     // Initialize the logger when the module is loaded
-    logger::setup_logger().expect("Failed to initialize logger");
+    let level_filter: LevelFilter = if SHOULD_DEBUG {
+        LevelFilter::Debug
+    } else {
+        LevelFilter::Off
+    };
 
+    logger::setup_logger(level_filter).expect("Failed to initialize logger");
     m.add_class::<Waveguide>()?;
+    m.add_class::<PhaseSpace>()?;
     Ok(())
 }
 
@@ -334,14 +433,16 @@ pub fn build_root_seeking_closure(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use approx::{assert_abs_diff_eq, assert_abs_diff_ne};
+    use approx::assert_abs_diff_eq;
     use roots::{SimpleConvergency, find_root_brent};
     use std::f64::consts::PI;
+
+    const EPSILON: f64 = 1e-10;
 
     #[test]
     fn test_period_is_4() {
         let waveguide = Waveguide::new(1.0, 1.0, PI / 2.0, 1);
-        assert_abs_diff_eq!(waveguide.period(), 4.0, epsilon = 1e-10);
+        assert_abs_diff_eq!(waveguide.period(), 4.0, epsilon = EPSILON);
     }
 
     #[test]
@@ -458,10 +559,10 @@ mod tests {
         let d = 0.1;
         let k = std::f64::consts::PI / 2.0;
 
-        let waveguide = Waveguide::new(y_0, d, k, 1);
+        let mut waveguide = Waveguide::new(y_0, d, k, 1);
 
         let (s_np1, _, x_np1, theta_np1, y_np1) =
-            waveguide.iterate_map(false, x_start, theta_start);
+            waveguide.iterate_map(false, x_start, theta_start).unwrap();
         assert_eq!(s_np1, true);
 
         // Note that this is the intersection with the corrugated ceiling.
@@ -478,10 +579,10 @@ mod tests {
         let d = 0.73;
         let k = std::f64::consts::PI / 2.0;
 
-        let waveguide = Waveguide::new(y_0, d, k, 2);
+        let mut waveguide = Waveguide::new(y_0, d, k, 2);
 
         let (s_np1, x_np1_raw, x_np1, theta_np1, y_np1) =
-            waveguide.iterate_map(false, x_start, theta_start);
+            waveguide.iterate_map(false, x_start, theta_start).unwrap();
 
         // 1. Ray must hit the ceiling
         assert_eq!(s_np1, true);
@@ -496,9 +597,6 @@ mod tests {
         // 4. The specular reflection angle must match the analytical formula
         let expected_theta_np1 = (2.0 * waveguide.psi_n(x_np1_raw)) - theta_start;
         assert_abs_diff_eq!(theta_np1, expected_theta_np1, epsilon = 1e-8);
-
-        let (s_np2, x_np2_raw, x_np2, theta_np2, y_np2) =
-            waveguide.iterate_map(false, x_np1, theta_np1);
     }
 
     #[test]
@@ -509,10 +607,10 @@ mod tests {
         let d = 0.73;
         let k = std::f64::consts::PI / 2.0;
 
-        let waveguide = Waveguide::new(y_0, d, k, 2);
+        let mut waveguide = Waveguide::new(y_0, d, k, 2);
 
         let (s_np1, x_np1_raw, x_np1, theta_np1, y_np1) =
-            waveguide.iterate_map(false, x_start, theta_start);
+            waveguide.iterate_map(false, x_start, theta_start).unwrap();
 
         assert_eq!(s_np1, true);
 
@@ -533,10 +631,10 @@ mod tests {
         let d = 0.73;
         let k = std::f64::consts::PI / 2.0;
 
-        let waveguide = Waveguide::new(y_0, d, k, 2);
+        let mut waveguide = Waveguide::new(y_0, d, k, 2);
 
         let (s_np1, x_np1_raw, x_np1, theta_np1, y_np1) =
-            waveguide.iterate_map(false, x_start, theta_start);
+            waveguide.iterate_map(false, x_start, theta_start).unwrap();
 
         assert_eq!(s_np1, true);
 
@@ -555,7 +653,7 @@ mod tests {
         let y_0 = 2.0;
         let d = 0.73;
         let k = std::f64::consts::PI / 2.0;
-        let waveguide = Waveguide::new(y_0, d, k, 2);
+        let mut waveguide = Waveguide::new(y_0, d, k, 2);
 
         // Ray state at the start of Iteration 7
         let s_n = true; // Starting on the ceiling
@@ -563,7 +661,7 @@ mod tests {
         let theta_start = -2.9785129236040566; // Extremely shallow angle pointing left and down
 
         let (s_np1, x_np1_raw, _x_np1, _theta_np1, _y_np1) =
-            waveguide.iterate_map(s_n, x_start, theta_start);
+            waveguide.iterate_map(s_n, x_start, theta_start).unwrap();
 
         // 1. Calculate the theoretical floor intersection (~ -12.44)
         let x_floor = x_start - (waveguide.boundary(x_start) / theta_start.tan());
@@ -591,5 +689,19 @@ mod tests {
             k,
         );
         assert_abs_diff_eq!(root_closure(x_np1_raw), 0.0, epsilon = 1e-8);
+    }
+
+    #[test]
+    fn test_get_gamma_range_for_delta_001() {
+        let y_0 = 1.0;
+        let d = 0.001;
+        // let k = std::f64::consts::PI / 2.0;
+        let k = 1.0;
+        let waveguide = Waveguide::new(y_0, d, k, 2);
+
+        let gamma_range = waveguide.get_gamma_range();
+
+        assert_abs_diff_eq!(gamma_range.0, -0.0014999995000003002, epsilon = EPSILON);
+        assert_abs_diff_eq!(gamma_range.1, 0.0014999995000003002, epsilon = EPSILON);
     }
 }
