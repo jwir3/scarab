@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from corrugated_root_solver import Waveguide, PhaseSpace # type: ignore
 
 Y_0 = 1.0
-D = 0.005
+D = 0.0005
 # K = np.pi / 2.0
 K = 1.0
 
@@ -19,7 +19,7 @@ GRAPHICAL_PERIODS = 2
 SEGMENTS=20
 
 # The number of iterations that should be computed for each trajectory.
-ITERATIONS=10_000
+ITERATIONS=1000
 
 X_MIN=0
 X_MAX=6.0
@@ -200,42 +200,43 @@ def plot_phase_space(guide):
     #
     # Second, we need to only visualize the small space where the mixing occurs. As such, we
     # hard-code the dimensions of the graph to match Leonel's original specification.
-    if LEONEL_REPRODUCTION:
-        gamma_graph_min = -0.09
-        gamma_graph_max = 0.09
-        x_graph_min = X_MIN
-        x_graph_max = X_MAX
-        x_starts = np.linspace(X_MIN, X_MAX, SEGMENTS)
-        theta_starts_deg_1 = np.linspace(LEONEL_THETA_MIN_1, LEONEL_THETA_MAX_1, SEGMENTS)
-        theta_starts_deg_2 = np.linspace(LEONEL_THETA_MIN_2, LEONEL_THETA_MAX_2, SEGMENTS)
+    delta = D / Y_0
 
-        for x_start in x_starts:
-            for theta_start in theta_starts_deg_1:
-                compute_trajectory(guide, x_start=x_start, theta_n_deg=theta_start, iters=ITERATIONS, should_plot=False)
-            for theta_start in theta_starts_deg_2:
-                compute_trajectory(guide, x_start=x_start, theta_n_deg=theta_start, iters=ITERATIONS, should_plot=False)
-    else:
-        gamma_range = guide.get_gamma_range()
-        gamma_graph_min = gamma_range[0]
-        gamma_graph_max = gamma_range[1]
-        x_graph_min = X_MIN
-        x_graph_max = X_MAX
+    # Calculate the strict physical shadowing threshold
+    gamma_threshold = np.arctan(delta * guide.get_wavenumber()) / guide.get_wavenumber()
 
-        # Convert the dynamic theoretical gamma limits into physical degrees
-        # (Using K to map gamma back to theta in radians, then converting to degrees)
-        theta_max_degs = abs(gamma_graph_max) * guide.get_wavenumber() * (180.0 / np.pi)
+    # Unify the viewport: Ensure the window is never smaller than Leonel's 0.09,
+    # but scales up (e.g., by 1.5x) when the shadowing threshold exceeds it.
+    gamma_bound = max(0.09, 1.5 * gamma_threshold)
 
-        # Create concentrated seeds for the right and left halves of the visible phase space
-        theta_starts_right = np.linspace(0.1, theta_max_degs, SEGMENTS)
-        theta_starts_left = np.linspace(180.0 - theta_max_degs, 179.9, SEGMENTS)
+    gamma_graph_min = -gamma_bound
+    gamma_graph_max = gamma_bound
+    x_graph_min = X_MIN
+    x_graph_max = X_MAX
 
-        x_starts = np.linspace(X_MIN, X_MAX, SEGMENTS)
+    # Convert the unified gamma limits into physical degrees
+    theta_max_degs = gamma_bound * guide.get_wavenumber() * (180.0 / np.pi)
 
-        for x_start in x_starts:
-            for theta_start in theta_starts_right:
-                compute_trajectory(guide, x_start=x_start, theta_n_deg=theta_start, iters=ITERATIONS, should_plot=False)
-            for theta_start in theta_starts_left:
-                compute_trajectory(guide, x_start=x_start, theta_n_deg=theta_start, iters=ITERATIONS, should_plot=False)
+    # Create concentrated seeds for the right and left halves of the visible phase space
+    theta_starts_right = np.linspace(0.1, theta_max_degs, SEGMENTS)
+    theta_starts_left = np.linspace(180.0 - theta_max_degs, 179.9, SEGMENTS)
+
+    # New: Concentrated seeds to map the regular invariant curves near gamma = 0
+    theta_starts_whispering_right = np.linspace(0.01, 0.09, 30)
+    theta_starts_whispering_left = np.linspace(179.91, 179.99, 30)
+
+    x_starts = np.linspace(X_MIN, X_MAX, SEGMENTS)
+
+    for x_start in x_starts:
+        for theta_start in theta_starts_right:
+            compute_trajectory(guide, x_start=x_start, theta_n_deg=theta_start, iters=ITERATIONS, should_plot=False)
+        for theta_start in theta_starts_left:
+            compute_trajectory(guide, x_start=x_start, theta_n_deg=theta_start, iters=ITERATIONS, should_plot=False)
+        for theta_start in theta_starts_whispering_left:
+            compute_trajectory(guide, x_start=x_start, theta_n_deg=theta_start, iters=ITERATIONS, should_plot=False)
+        for theta_start in theta_starts_whispering_right:
+            compute_trajectory(guide, x_start=x_start, theta_n_deg=theta_start, iters=ITERATIONS, should_plot=False)
+
     phase_space = guide.get_phase_space()
 
     # We only want the x and theta coordinates for when we're intersecting the floor
