@@ -3,13 +3,16 @@ import matplotlib.pyplot as plt
 from corrugated_root_solver import Waveguide, PhaseSpace # type: ignore
 
 Y_0 = 1.0
-D = 0.0005
+D = 0.1
 # K = np.pi / 2.0
 K = 1.0
 
+# Flag that outputs debug information in the command line. This can be VERY verbose, so be careful.
+DEBUG=True
+
 # Debugging flag to toggle the display of the normal vectors at specific x-coordinates on the
 # waveguide boundary. When set to True, the normal vectors will be plotted for visual inspection.
-DEBUG_NORMALS = True
+DEBUG_NORMALS = False
 
 # The number of periods of guide.period() that will be graphically displayed in the
 # output graph. This is important because it is used for the wrapping code.
@@ -38,8 +41,6 @@ LEONEL_REPRODUCTION=(D/Y_0) <= 0.001
 
 THETA_MIN = 0.1
 THETA_MAX = 179.9
-
-DEBUG=False
 
 ## Some Utility Functions
 def get_gamma_for_theta(theta, guide):
@@ -106,6 +107,9 @@ def plot_wrapped_ray(guide, x_start, y_start, x_end, theta, y_end):
     end_tile = int(np.floor(x_end / width))
 
     # 0. Base Case: The ray does not cross a visual boundary
+    if DEBUG:
+        print(f"({x_start}, {y_start}) -> ({x_end}, {y_end})")
+
     if start_tile == end_tile:
         plt.plot([x_start % width, x_end % width], [y_start, y_end], 'b-', label=label)
         return
@@ -149,45 +153,33 @@ def compute_trajectory(guide, x_start, theta_n_deg=45.0, iters=1, should_plot=Tr
     if should_plot:
         plt.plot(start_wrapped, 0, 'ro')
 
-    s_start = False
-    y_start = 0.0
+    results = guide.compute_trajectory(x_start, theta_n_deg, iters)
 
     for i in range(0, iters):
-        if DEBUG:
-            print(f"Initiating iteration: {i}")
-
-        iteration_result = guide.iterate_map(s_start, x_start, theta_start)
-        if iteration_result == None:
-            break
-
-        (s_np1, x_np1_raw, x_np1, theta_np1, y_np1) = iteration_result
-
-        # Pass y_start along with the raw, unwrapped coordinates to process the intersection heights
+        (s_n, x_n, theta_n, s_np1, x_np1_raw, theta_np1) = results[i]
         if should_plot:
-            plot_wrapped_ray(guide, x_start, y_start, x_np1_raw, theta_start, y_np1)
+            if s_n:
+                y_n = guide.boundary(x_n)
+            else:
+                y_n = 0.0
 
-        # Plot the final intersection point at its wrapped location
-        if should_plot:
+            if s_np1:
+                y_np1 = guide.boundary(x_np1_raw)
+            else:
+                y_np1 = 0.0
+
+            plot_wrapped_ray(guide, x_n, y_n, x_np1_raw, theta_n, y_np1)
+
             plt.plot(x_np1_raw % width, y_np1, 'go')
 
-        # Plot the intersection point normal
-        if DEBUG_NORMALS and y_np1 > 0 and should_plot:
-            n = x_np1_raw % width
-            plot_normal_at_x(guide, x_normal=n)
-
-        if DEBUG:
-            print(f"Intersection point: raw_x = {x_np1_raw}, wrapped_x = {x_np1}, y = {y_np1}")
-            print(f"theta_np1: {theta_np1}")
-
-        s_start = s_np1
-        x_start = x_np1
-        theta_start = theta_np1
-        y_start = y_np1
+            if DEBUG_NORMALS and y_np1 > 0:
+                n = x_np1_raw % width
+                plot_normal_at_x(guide, x_normal=n)
 
 def plot_trajectory_space(guide):
     plot_waveguide_boundary(guide)
-    compute_trajectory(guide, x_start=1.3, theta_n_deg=45, iters=20, should_plot=True)
-    # compute_trajectory(guide, x_start=6.33571276243665, theta_n_deg=-4.088981432330988 * 180/np.pi, iters=3)
+    # compute_trajectory(guide, x_start=1.3, theta_n_deg=45, iters=20, should_plot=True)
+    compute_trajectory(guide, x_start=6.33571276243665, theta_n_deg=-4.088981432330988 * 180/np.pi, iters=3)
     # compute_trajectory(guide, x_start=1.0, theta_n_deg=30, iters=2)
     # compute_trajectory(guide, x_start=3.0, theta_n_deg=25, iters=2)
 
@@ -268,8 +260,8 @@ if __name__ == "__main__":
     #### START MAIN CODE ###
     guide = Waveguide(Y_0, D, K, GRAPHICAL_PERIODS)
 
-    # plot_trajectory_space(guide)
-    plot_phase_space(guide)
+    plot_trajectory_space(guide)
+    # plot_phase_space(guide)
 
     ### END MAIN CODE ###
 

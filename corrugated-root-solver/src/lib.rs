@@ -11,6 +11,9 @@ pub mod logger;
 
 const SHOULD_DEBUG: bool = false;
 
+// A point from one (s_n, x_n, theta_n) to another (s_{n+1}, x_{n+1}, theta_{n+1})
+type Trajectory = (bool, f64, f64, bool, f64, f64);
+
 // If we want to discard some percentage of iterations before utilizing them, we can set that here.
 // const DISCARD_ITERATIONS_PCT = 0.1;
 
@@ -401,26 +404,40 @@ impl Waveguide {
         Some((s_np1, x_np1_raw, x_np1, theta_np1, y_np1))
     }
 
-    pub fn compute_trajectory(&mut self, x_s: f64, theta_n_deg: f64, iters: u64) {
+    pub fn compute_trajectory(
+        &mut self,
+        x_s: f64,
+        theta_n_deg: f64,
+        iters: u64,
+    ) -> Vec<Trajectory> {
+        let mut results: Vec<Trajectory> = vec![];
         let mut x_start = x_s;
         let mut theta_start = theta_n_deg.to_radians();
         let mut s_start = false;
-        let mut _y_start = 0.0;
+        let mut y_start = 0.0;
 
-        for _ in 0..iters {
+        for i in 0..iters {
+            debug!("Initiating iteration: {}", i);
             let iteration_result = self.iterate_map(s_start, x_start, theta_start);
             if iteration_result.is_none() {
                 break;
             }
 
-            let (s_np1, _x_np1_raw, x_np1, theta_np1, y_np1) = iteration_result.unwrap();
+            let (s_np1, x_np1_raw, x_np1, theta_np1, y_np1) = iteration_result.unwrap();
+
+            // x_np1 can be computed from x_np1_raw, so we only push this first one
+            results.push((s_start, x_start, theta_start, s_np1, x_np1_raw, theta_np1));
             s_start = s_np1;
             x_start = x_np1;
             theta_start = theta_np1;
-            _y_start = y_np1;
+            y_start = y_np1;
+
+            debug!("Iteration {} complete", i);
         }
 
-        debug!("Final result: {:?}, {:?}", x_start, _y_start);
+        debug!("Final result: {:?}, {:?}", x_start, y_start);
+
+        results
     }
 }
 
