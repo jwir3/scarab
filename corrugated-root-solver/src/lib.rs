@@ -16,7 +16,7 @@ const SHOULD_DEBUG: bool = false;
 
 #[pyclass]
 #[derive(Clone)]
-struct PhaseSpace {
+pub struct PhaseSpace {
     coordinates: Vec<(bool, f64, f64)>,
 }
 
@@ -29,7 +29,7 @@ impl PhaseSpace {
         }
     }
 
-    fn add_coordinates(&mut self, coord: (bool, f64, f64)) {
+    pub fn add_coordinates(&mut self, coord: (bool, f64, f64)) {
         self.coordinates.push(coord);
     }
 
@@ -63,7 +63,7 @@ impl PhaseSpace {
 }
 
 #[pyclass]
-struct Waveguide {
+pub struct Waveguide {
     y0: f64,
     d: f64,
     k: f64,
@@ -399,6 +399,28 @@ impl Waveguide {
         self.phase_space.add_coordinates((s_np1, x_np1, theta_np1));
 
         Some((s_np1, x_np1_raw, x_np1, theta_np1, y_np1))
+    }
+
+    pub fn compute_trajectory(&mut self, x_s: f64, theta_n_deg: f64, iters: u64) {
+        let mut x_start = x_s;
+        let mut theta_start = theta_n_deg.to_radians();
+        let mut s_start = false;
+        let mut _y_start = 0.0;
+
+        for _ in 0..iters {
+            let iteration_result = self.iterate_map(s_start, x_start, theta_start);
+            if iteration_result.is_none() {
+                break;
+            }
+
+            let (s_np1, _x_np1_raw, x_np1, theta_np1, y_np1) = iteration_result.unwrap();
+            s_start = s_np1;
+            x_start = x_np1;
+            theta_start = theta_np1;
+            _y_start = y_np1;
+        }
+
+        debug!("Final result: {:?}, {:?}", x_start, _y_start);
     }
 }
 
