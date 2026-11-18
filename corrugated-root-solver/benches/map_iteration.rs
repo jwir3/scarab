@@ -11,25 +11,40 @@ fn benchmark_waveguide_comparison(c: &mut Criterion) {
     group.sampling_mode(SamplingMode::Flat);
     group.measurement_time(Duration::from_secs(10));
 
+    let batch_size = 100;
+    // Construct the initial conditions outside the benchmark loops
+    let initial_conditions = vec![(1.0, 45.0); batch_size];
+
     for steps in [1_000, 10_000] {
-        // Optional: Reports throughput in trajectory steps/sec
-        group.throughput(Throughput::Elements(steps as u64));
+        // Optional: Reports throughput in total trajectory steps/sec across the batch
+        group.throughput(Throughput::Elements((steps * batch_size as u64) as u64));
 
         // 1. Sequential Baseline
+        // Updated to process the full batch sequentially for an apples-to-apples comparison
         group.bench_with_input(BenchmarkId::new("sequential", steps), &steps, |b, &s| {
             let mut guide = Waveguide::new(1.0, 0.001, 1.0, 2);
-            b.iter(|| guide.compute_trajectory(black_box(1.0), black_box(45.0), black_box(s)));
-        });
-
-        // 2. Parallelized Version (uncomment when ready)
-        /*
-        group.bench_with_input(BenchmarkId::new("parallel", steps), &steps, |b, &s| {
-            let mut guide = Waveguide::new(1.0, 0.001, 1.0, 2);
             b.iter(|| {
-                guide.compute_trajectory_parallel(black_box(1.0), black_box(45.0), black_box(s))
+                for (x_start, theta_start) in initial_conditions.iter() {
+                    guide.compute_trajectory(
+                        black_box(*x_start),
+                        black_box(*theta_start),
+                        black_box(s),
+                    );
+                }
             });
         });
-        */
+
+        // 2. Parallelized Version
+        group.bench_with_input(BenchmarkId::new("parallel", steps), &steps, |b, &s| {
+            let guide = Waveguide::new(1.0, 0.001, 1.0, 2);
+
+            b.iter(|| {
+                guide.compute_multiple_trajectories(
+                    black_box(initial_conditions.clone()),
+                    black_box(s),
+                )
+            });
+        });
     }
 
     group.finish();

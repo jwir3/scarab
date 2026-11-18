@@ -1,15 +1,16 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 #![allow(non_local_definitions)]
 use pyo3::prelude::*;
+use rayon::prelude::*;
 use roots::{SimpleConvergency, find_root_brent};
 use std::f64::consts::PI;
 use vecmath::{Vector2, vec2_normalized};
 
 use log::{LevelFilter, debug, info};
 
-pub mod logger;
+use std::str::FromStr;
 
-const SHOULD_DEBUG: bool = false;
+pub mod logger;
 
 // A point from one (s_n, x_n, theta_n) to another (s_{n+1}, x_{n+1}, theta_{n+1})
 type Trajectory = (bool, f64, f64, bool, f64, f64);
@@ -434,17 +435,57 @@ impl Waveguide {
 
         results
     }
+
+    pub fn compute_multiple_trajectories(
+        &self,
+        initial_conditions: Vec<(f64, f64)>,
+        iters: u64,
+    ) -> Vec<Vec<Trajectory>> {
+        initial_conditions
+            .into_par_iter()
+            .map(|(x_s, theta_n_deg)| {
+                let mut local_results: Vec<Trajectory> = vec![];
+                let mut x_start = x_s;
+                let mut theta_start = theta_n_deg.to_radians();
+                let mut s_start = false;
+                let mut _y_start = 0.0;
+
+                for _ in 0..iters {
+                    // Note: iterate_map must take &self for this to compile
+                    let iteration_result = self.iterate_map(s_start, x_start, theta_start);
+                    if iteration_result.is_none() {
+                        break;
+                    }
+
+                    let (s_np1, x_np1_raw, x_np1, theta_np1, y_np1) = iteration_result.unwrap();
+
+                    local_results.push((
+                        s_start,
+                        x_start,
+                        theta_start,
+                        s_np1,
+                        x_np1_raw,
+                        theta_np1,
+                    ));
+                    s_start = s_np1;
+                    x_start = x_np1;
+                    theta_start = theta_np1;
+                    _y_start = y_np1;
+                }
+                local_results
+            })
+            .collect()
+    }
 }
 
 // The module name must match the `name` defined in the [lib] section of Cargo.toml
 #[pymodule]
 fn corrugated_root_solver(_py: Python, m: &PyModule) -> PyResult<()> {
-    // Initialize the logger when the module is loaded
-    let level_filter: LevelFilter = if SHOULD_DEBUG {
-        LevelFilter::Debug
-    } else {
-        LevelFilter::Off
-    };
+    // Retrieve the environment variable, defaulting to "info" if missing
+    let log_level_str = std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
+
+    // Parse the string into a LevelFilter, falling back to Info on parse errors
+    let level_filter = log::LevelFilter::from_str(&log_level_str).unwrap_or(log::LevelFilter::Info);
 
     logger::setup_logger(level_filter).expect("Failed to initialize logger");
     m.add_class::<Waveguide>()?;

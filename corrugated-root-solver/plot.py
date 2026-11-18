@@ -1,6 +1,21 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from corrugated_root_solver import Waveguide, PhaseSpace # type: ignore
+import os
+import logging
+from corrugated_root_solver import Waveguide  # type: ignore
+
+# Retrieve the environment variable set by our .envrc file
+log_level_str = os.environ.get("LOG_LEVEL", "info").upper()
+
+# Map the string to the corresponding logging integer level
+numeric_level = getattr(logging, log_level_str, logging.INFO)
+
+# Configure the global Python logger
+logging.basicConfig(
+    level=numeric_level,
+    format='[%(asctime)s] [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%dT%H:%M:%SZ'
+)
 
 Y_0 = 1.0
 D = 0.001
@@ -107,8 +122,7 @@ def plot_wrapped_ray(guide, x_start, y_start, x_end, theta, y_end):
     end_tile = int(np.floor(x_end / width))
 
     # 0. Base Case: The ray does not cross a visual boundary
-    if DEBUG:
-        print(f"({x_start}, {y_start}) -> ({x_end}, {y_end})")
+    logging.debug(f"({x_start}, {y_start}) -> ({x_end}, {y_end})")
 
     if start_tile == end_tile:
         plt.plot([x_start % width, x_end % width], [y_start, y_end], 'b-', label=label)
@@ -148,8 +162,7 @@ def plot_wrapped_ray(guide, x_start, y_start, x_end, theta, y_end):
 def compute_trajectory(guide, x_start, theta_n_deg=45.0, iters=1, should_plot=True, phase_space=None):
     theta_start = theta_n_deg * (np.pi / 180.0)
 
-    if DEBUG:
-        print(f"Iterations under consideration: {iters}");
+    logging.debug(f"Iterations under consideration: {iters}");
 
     if phase_space != None:
         phase_space.append((False, x_start, theta_start))
@@ -163,8 +176,7 @@ def compute_trajectory(guide, x_start, theta_n_deg=45.0, iters=1, should_plot=Tr
 
     iter_count = 0
     for i in results:
-        if DEBUG:
-            print(f"Iteration count: {iter_count}")
+        logging.debug(f"Iteration count: {iter_count}")
 
         (s_n, x_n, theta_n, s_np1, x_np1_raw, theta_np1) = i
 
@@ -199,6 +211,8 @@ def plot_trajectory_space(guide):
     # compute_trajectory(guide, x_start=3.0, theta_n_deg=25, iters=2)
 
 def plot_phase_space(guide):
+    width = GRAPHICAL_PERIODS * guide.period()
+
     phase_space = []
     # When we are reproducing Leonel's results, we need to do two separate things: First, we need to
     # encode the inputs as gamma and Xn. Because Leonel uses a "shortcut" where left-pointing rays
@@ -235,15 +249,28 @@ def plot_phase_space(guide):
 
     x_starts = np.linspace(X_MIN, X_MAX, SEGMENTS)
 
+    initial_conditions = []
     for x_start in x_starts:
         for theta_start in theta_starts_right:
-            compute_trajectory(guide, x_start=x_start, theta_n_deg=theta_start, iters=ITERATIONS, should_plot=False, phase_space=phase_space)
+            # compute_trajectory(guide, x_start=x_start, theta_n_deg=theta_start, iters=ITERATIONS, should_plot=False, phase_space=phase_space)
+            initial_conditions.append((x_start, theta_start))
         for theta_start in theta_starts_left:
-            compute_trajectory(guide, x_start=x_start, theta_n_deg=theta_start, iters=ITERATIONS, should_plot=False, phase_space=phase_space)
+            # compute_trajectory(guide, x_start=x_start, theta_n_deg=theta_start, iters=ITERATIONS, should_plot=False, phase_space=phase_space)
+            initial_conditions.append((x_start, theta_start))
+
         for theta_start in theta_starts_whispering_left:
-            compute_trajectory(guide, x_start=x_start, theta_n_deg=theta_start, iters=ITERATIONS, should_plot=False, phase_space=phase_space)
+            # compute_trajectory(guide, x_start=x_start, theta_n_deg=theta_start, iters=ITERATIONS, should_plot=False, phase_space=phase_space)
+            initial_conditions.append((x_start, theta_start))
+
         for theta_start in theta_starts_whispering_right:
-            compute_trajectory(guide, x_start=x_start, theta_n_deg=theta_start, iters=ITERATIONS, should_plot=False, phase_space=phase_space)
+            # compute_trajectory(guide, x_start=x_start, theta_n_deg=theta_start, iters=ITERATIONS, should_plot=False, phase_space=phase_space)
+            initial_conditions.append((x_start, theta_start))
+
+    results = guide.compute_multiple_trajectories(initial_conditions, ITERATIONS)
+    for result in results:
+        for trajectory in result:
+            (s_n, x_n, theta_n, s_np1, x_np1_raw, theta_np1) = trajectory
+            phase_space.append((s_np1, x_np1_raw % width, theta_np1))
 
     # phase_space = guide.get_phase_space()
 
