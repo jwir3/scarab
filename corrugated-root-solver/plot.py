@@ -3,12 +3,12 @@ import matplotlib.pyplot as plt
 from corrugated_root_solver import Waveguide, PhaseSpace # type: ignore
 
 Y_0 = 1.0
-D = 0.1
+D = 0.001
 # K = np.pi / 2.0
 K = 1.0
 
 # Flag that outputs debug information in the command line. This can be VERY verbose, so be careful.
-DEBUG=True
+DEBUG=False
 
 # Debugging flag to toggle the display of the normal vectors at specific x-coordinates on the
 # waveguide boundary. When set to True, the normal vectors will be plotted for visual inspection.
@@ -145,8 +145,14 @@ def plot_wrapped_ray(guide, x_start, y_start, x_end, theta, y_end):
     plt.plot([enter_x_plot, x_end % width], [current_y, y_end], 'b-')
 
 
-def compute_trajectory(guide, x_start, theta_n_deg=45.0, iters=1, should_plot=True):
+def compute_trajectory(guide, x_start, theta_n_deg=45.0, iters=1, should_plot=True, phase_space=None):
     theta_start = theta_n_deg * (np.pi / 180.0)
+
+    if DEBUG:
+        print(f"Iterations under consideration: {iters}");
+
+    if phase_space != None:
+        phase_space.append((False, x_start, theta_start))
 
     width = GRAPHICAL_PERIODS * guide.period()
     start_wrapped = x_start % width
@@ -155,8 +161,16 @@ def compute_trajectory(guide, x_start, theta_n_deg=45.0, iters=1, should_plot=Tr
 
     results = guide.compute_trajectory(x_start, theta_n_deg, iters)
 
-    for i in range(0, iters):
-        (s_n, x_n, theta_n, s_np1, x_np1_raw, theta_np1) = results[i]
+    iter_count = 0
+    for i in results:
+        if DEBUG:
+            print(f"Iteration count: {iter_count}")
+
+        (s_n, x_n, theta_n, s_np1, x_np1_raw, theta_np1) = i
+
+        if phase_space != None:
+            phase_space.append((s_np1, x_np1_raw % width, theta_np1))
+
         if should_plot:
             if s_n:
                 y_n = guide.boundary(x_n)
@@ -175,6 +189,7 @@ def compute_trajectory(guide, x_start, theta_n_deg=45.0, iters=1, should_plot=Tr
             if DEBUG_NORMALS and y_np1 > 0:
                 n = x_np1_raw % width
                 plot_normal_at_x(guide, x_normal=n)
+        iter_count = iter_count + 1
 
 def plot_trajectory_space(guide):
     plot_waveguide_boundary(guide)
@@ -184,6 +199,7 @@ def plot_trajectory_space(guide):
     # compute_trajectory(guide, x_start=3.0, theta_n_deg=25, iters=2)
 
 def plot_phase_space(guide):
+    phase_space = []
     # When we are reproducing Leonel's results, we need to do two separate things: First, we need to
     # encode the inputs as gamma and Xn. Because Leonel uses a "shortcut" where left-pointing rays
     # have a negative gamma, we also want to split this into two separate segments that are
@@ -213,7 +229,7 @@ def plot_phase_space(guide):
     theta_starts_right = np.linspace(0.1, theta_max_degs, SEGMENTS)
     theta_starts_left = np.linspace(180.0 - theta_max_degs, 179.9, SEGMENTS)
 
-    # New: Concentrated seeds to map the regular invariant curves near gamma = 0
+    # Concentrated seeds to map the regular invariant curves near gamma = 0
     theta_starts_whispering_right = np.linspace(0.01, 0.09, 30)
     theta_starts_whispering_left = np.linspace(179.91, 179.99, 30)
 
@@ -221,19 +237,23 @@ def plot_phase_space(guide):
 
     for x_start in x_starts:
         for theta_start in theta_starts_right:
-            compute_trajectory(guide, x_start=x_start, theta_n_deg=theta_start, iters=ITERATIONS, should_plot=False)
+            compute_trajectory(guide, x_start=x_start, theta_n_deg=theta_start, iters=ITERATIONS, should_plot=False, phase_space=phase_space)
         for theta_start in theta_starts_left:
-            compute_trajectory(guide, x_start=x_start, theta_n_deg=theta_start, iters=ITERATIONS, should_plot=False)
+            compute_trajectory(guide, x_start=x_start, theta_n_deg=theta_start, iters=ITERATIONS, should_plot=False, phase_space=phase_space)
         for theta_start in theta_starts_whispering_left:
-            compute_trajectory(guide, x_start=x_start, theta_n_deg=theta_start, iters=ITERATIONS, should_plot=False)
+            compute_trajectory(guide, x_start=x_start, theta_n_deg=theta_start, iters=ITERATIONS, should_plot=False, phase_space=phase_space)
         for theta_start in theta_starts_whispering_right:
-            compute_trajectory(guide, x_start=x_start, theta_n_deg=theta_start, iters=ITERATIONS, should_plot=False)
+            compute_trajectory(guide, x_start=x_start, theta_n_deg=theta_start, iters=ITERATIONS, should_plot=False, phase_space=phase_space)
 
-    phase_space = guide.get_phase_space()
+    # phase_space = guide.get_phase_space()
 
     # We only want the x and theta coordinates for when we're intersecting the floor
-    x_coords = phase_space.get_x_coordinates_for_slice(False)
-    theta_coords = phase_space.get_theta_coordinates_for_slice(False)
+    x_coords = [item[1] for item in phase_space if not item[0]]
+    theta_coords = [item[2] for item in phase_space if not item[0]]
+
+    # x_coords = phase_space.get_x_coordinates_for_slice(False)
+    # theta_coords = phase_space.get_theta_coordinates_for_slice(False)
+
     gammas = []
     Xs = []
     for x in x_coords:
@@ -260,8 +280,8 @@ if __name__ == "__main__":
     #### START MAIN CODE ###
     guide = Waveguide(Y_0, D, K, GRAPHICAL_PERIODS)
 
-    plot_trajectory_space(guide)
-    # plot_phase_space(guide)
+    # plot_trajectory_space(guide)
+    plot_phase_space(guide)
 
     ### END MAIN CODE ###
 

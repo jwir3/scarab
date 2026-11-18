@@ -355,7 +355,7 @@ impl Waveguide {
      * (x_n, theta_n), and computes the next state of the ray, (S_n+1, x_n+1_raw, x_n+1, theta_n+1).
      */
     pub fn iterate_map(
-        &mut self,
+        &self,
         s_n: bool,
         x_n: f64,
         theta_n: f64,
@@ -399,7 +399,7 @@ impl Waveguide {
             false => 0.0,
         };
 
-        self.phase_space.add_coordinates((s_np1, x_np1, theta_np1));
+        // self.phase_space.add_coordinates((s_np1, x_np1, theta_np1));
 
         Some((s_np1, x_np1_raw, x_np1, theta_np1, y_np1))
     }
@@ -414,7 +414,9 @@ impl Waveguide {
         let mut x_start = x_s;
         let mut theta_start = theta_n_deg.to_radians();
         let mut s_start = false;
-        let mut y_start = 0.0;
+        let mut _y_start = 0.0;
+
+        debug!("{:?} iterations to complete", iters);
 
         for i in 0..iters {
             debug!("Initiating iteration: {}", i);
@@ -427,15 +429,16 @@ impl Waveguide {
 
             // x_np1 can be computed from x_np1_raw, so we only push this first one
             results.push((s_start, x_start, theta_start, s_np1, x_np1_raw, theta_np1));
+
             s_start = s_np1;
             x_start = x_np1;
             theta_start = theta_np1;
-            y_start = y_np1;
+            _y_start = y_np1;
 
             debug!("Iteration {} complete", i);
         }
 
-        debug!("Final result: {:?}, {:?}", x_start, y_start);
+        debug!("Final result length: {:?}", results.len());
 
         results
     }
