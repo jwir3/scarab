@@ -17,53 +17,53 @@ type Trajectory = (bool, f64, f64, bool, f64, f64);
 // If we want to discard some percentage of iterations before utilizing them, we can set that here.
 // const DISCARD_ITERATIONS_PCT = 0.1;
 
-#[pyclass]
-#[derive(Clone)]
-pub struct PhaseSpace {
-    coordinates: Vec<(bool, f64, f64)>,
-}
+// #[pyclass]
+// #[derive(Clone)]
+// pub struct PhaseSpace {
+//     coordinates: Vec<(bool, f64, f64)>,
+// }
 
-#[pymethods]
-impl PhaseSpace {
-    #[new]
-    pub fn new() -> Self {
-        PhaseSpace {
-            coordinates: vec![],
-        }
-    }
+// #[pymethods]
+// impl PhaseSpace {
+//     #[new]
+//     pub fn new() -> Self {
+//         PhaseSpace {
+//             coordinates: vec![],
+//         }
+//     }
 
-    pub fn add_coordinates(&mut self, coord: (bool, f64, f64)) {
-        self.coordinates.push(coord);
-    }
+//     pub fn add_coordinates(&mut self, coord: (bool, f64, f64)) {
+//         self.coordinates.push(coord);
+//     }
 
-    pub fn get_s_coordinates(&self) -> Vec<bool> {
-        self.coordinates.iter().map(|p| p.0).collect()
-    }
+//     pub fn get_s_coordinates(&self) -> Vec<bool> {
+//         self.coordinates.iter().map(|p| p.0).collect()
+//     }
 
-    pub fn get_x_coordinates(&self) -> Vec<f64> {
-        self.coordinates.iter().map(|p| p.1).collect()
-    }
+//     pub fn get_x_coordinates(&self) -> Vec<f64> {
+//         self.coordinates.iter().map(|p| p.1).collect()
+//     }
 
-    pub fn get_x_coordinates_for_slice(&self, s_n: bool) -> Vec<f64> {
-        self.coordinates
-            .iter()
-            .filter(|(s, _x, _t)| *s == s_n)
-            .map(|p| p.1)
-            .collect()
-    }
+//     pub fn get_x_coordinates_for_slice(&self, s_n: bool) -> Vec<f64> {
+//         self.coordinates
+//             .iter()
+//             .filter(|(s, _x, _t)| *s == s_n)
+//             .map(|p| p.1)
+//             .collect()
+//     }
 
-    pub fn get_theta_coordinates(&self) -> Vec<f64> {
-        self.coordinates.iter().map(|p| p.2).collect()
-    }
+//     pub fn get_theta_coordinates(&self) -> Vec<f64> {
+//         self.coordinates.iter().map(|p| p.2).collect()
+//     }
 
-    pub fn get_theta_coordinates_for_slice(&self, s_n: bool) -> Vec<f64> {
-        self.coordinates
-            .iter()
-            .filter(|(s, _x, _t)| *s == s_n)
-            .map(|p| p.2)
-            .collect()
-    }
-}
+//     pub fn get_theta_coordinates_for_slice(&self, s_n: bool) -> Vec<f64> {
+//         self.coordinates
+//             .iter()
+//             .filter(|(s, _x, _t)| *s == s_n)
+//             .map(|p| p.2)
+//             .collect()
+//     }
+// }
 
 #[pyclass]
 pub struct Waveguide {
@@ -73,9 +73,8 @@ pub struct Waveguide {
 
     /// The number of periods in the graphical version of the waveguide.
     graphical_periods: u32,
-
-    /// The phase space representation of the map
-    phase_space: PhaseSpace,
+    // The phase space representation of the map - Removed because we want to use multi-threading
+    // phase_space: PhaseSpace,
 }
 
 #[pymethods]
@@ -87,12 +86,7 @@ impl Waveguide {
             d,
             k,
             graphical_periods,
-            phase_space: PhaseSpace::new(),
         }
-    }
-
-    pub fn get_phase_space(&self) -> PhaseSpace {
-        self.phase_space.clone()
     }
 
     pub fn get_average_height(&self) -> f64 {
@@ -399,8 +393,6 @@ impl Waveguide {
             false => 0.0,
         };
 
-        // self.phase_space.add_coordinates((s_np1, x_np1, theta_np1));
-
         Some((s_np1, x_np1_raw, x_np1, theta_np1, y_np1))
     }
 
@@ -456,7 +448,6 @@ fn corrugated_root_solver(_py: Python, m: &PyModule) -> PyResult<()> {
 
     logger::setup_logger(level_filter).expect("Failed to initialize logger");
     m.add_class::<Waveguide>()?;
-    m.add_class::<PhaseSpace>()?;
     Ok(())
 }
 
@@ -601,7 +592,7 @@ mod tests {
         let d = 0.1;
         let k = std::f64::consts::PI / 2.0;
 
-        let mut waveguide = Waveguide::new(y_0, d, k, 1);
+        let waveguide = Waveguide::new(y_0, d, k, 1);
 
         let (s_np1, _, x_np1, theta_np1, y_np1) =
             waveguide.iterate_map(false, x_start, theta_start).unwrap();
@@ -621,7 +612,7 @@ mod tests {
         let d = 0.73;
         let k = std::f64::consts::PI / 2.0;
 
-        let mut waveguide = Waveguide::new(y_0, d, k, 2);
+        let waveguide = Waveguide::new(y_0, d, k, 2);
 
         let (s_np1, x_np1_raw, x_np1, theta_np1, y_np1) =
             waveguide.iterate_map(false, x_start, theta_start).unwrap();
@@ -649,7 +640,7 @@ mod tests {
         let d = 0.73;
         let k = std::f64::consts::PI / 2.0;
 
-        let mut waveguide = Waveguide::new(y_0, d, k, 2);
+        let waveguide = Waveguide::new(y_0, d, k, 2);
 
         let (s_np1, x_np1_raw, x_np1, theta_np1, y_np1) =
             waveguide.iterate_map(false, x_start, theta_start).unwrap();
@@ -673,7 +664,7 @@ mod tests {
         let d = 0.73;
         let k = std::f64::consts::PI / 2.0;
 
-        let mut waveguide = Waveguide::new(y_0, d, k, 2);
+        let waveguide = Waveguide::new(y_0, d, k, 2);
 
         let (s_np1, x_np1_raw, x_np1, theta_np1, y_np1) =
             waveguide.iterate_map(false, x_start, theta_start).unwrap();
@@ -695,7 +686,7 @@ mod tests {
         let y_0 = 2.0;
         let d = 0.73;
         let k = std::f64::consts::PI / 2.0;
-        let mut waveguide = Waveguide::new(y_0, d, k, 2);
+        let waveguide = Waveguide::new(y_0, d, k, 2);
 
         // Ray state at the start of Iteration 7
         let s_n = true; // Starting on the ceiling
